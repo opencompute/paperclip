@@ -78,7 +78,7 @@ curl -sS -X POST \
   "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/issues/$PAPERCLIP_TASK_ID/attachments" \
   -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
   -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \
-  -F "file=@dist/demo.mp4;type=video/mp4"
+  -F 'file=@"dist/demo.mp4";type=video/mp4'
 ```
 
 Then create a work product when the uploaded file is the deliverable:
@@ -92,6 +92,6 @@ curl -sS -X POST \
   --data-binary @artifact-work-product.json
 ```
 
-Use `type: "artifact"`, `provider: "paperclip"`, and metadata containing
-`attachmentId`, `contentType`, `byteSize`, `contentPath`, `openPath`,
-`downloadPath`, and `originalFilename`.
+Use `type: "artifact"`, `provider: "paperclip"`, and metadata containing the
+uploaded `attachmentId`. The server canonicalizes `contentType`, `byteSize`,
+`contentPath`, `openPath`, `downloadPath`, and `originalFilename`.
