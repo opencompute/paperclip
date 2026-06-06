@@ -32,6 +32,8 @@ import {
   issueTreeHolds,
   issueWorkProducts,
   issues,
+  projects,
+  projectWorkspaces,
   workspaceOperations,
 } from "@paperclipai/db";
 import {
@@ -383,6 +385,8 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       await db.delete(companySkills);
       await db.delete(workspaceOperations);
       await db.delete(executionWorkspaces);
+      await db.delete(projectWorkspaces);
+      await db.delete(projects);
       await db.delete(issuePlanDecompositions);
       await db.delete(issueThreadInteractions);
       await db.delete(documentAnnotationComments);
@@ -1306,6 +1310,96 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
 
     const comments = await db.select().from(issueComments).where(eq(issueComments.issueId, issueId));
     expect(comments).toHaveLength(0);
+  });
+
+  it("blocks a git-sensitive local adapter before launch when a project-workspace-linked issue is missing its project id", async () => {
+    const { companyId, agentId, runId, issueId } = await seedQueuedIssueRunFixture();
+    const projectId = randomUUID();
+    const projectWorkspaceId = randomUUID();
+    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Paperclip App",
+      status: "in_progress",
+    });
+    await db.insert(projectWorkspaces).values({
+      id: projectWorkspaceId,
+      companyId,
+      projectId,
+      name: "Primary workspace",
+      sourceType: "local_path",
+      cwd: `/tmp/paperclip-missing-workspace-${randomUUID()}`,
+      isPrimary: true,
+    });
+    await db
+      .update(issues)
+      .set({
+        title: "Launch from linked workspace without project id",
+        identifier: `${issuePrefix}-1`,
+        projectId: null,
+        projectWorkspaceId,
+      })
+      .where(eq(issues.id, issueId));
+
+    const heartbeat = heartbeatService(db);
+
+    await heartbeat.resumeQueuedRuns();
+    await waitForRunToSettle(heartbeat, runId, 5_000);
+
+    expect(mockAdapterExecute).not.toHaveBeenCalled();
+
+    const failedRun = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(failedRun).toMatchObject({
+      status: "failed",
+      errorCode: "workspace_validation_failed",
+    });
+    expect(failedRun?.error).toContain("linked to a project workspace but has no project id");
+    expect(failedRun?.resultJson).toMatchObject({
+      workspaceValidation: {
+        reason: "missing_project_id",
+        adapterType: "codex_local",
+        issueId,
+        issueProjectId: null,
+        issueProjectWorkspaceId: projectWorkspaceId,
+      },
+    });
+
+    const issue = await waitForValue(async () =>
+      db.select().from(issues).where(eq(issues.id, issueId)).then((rows) => {
+        const row = rows[0] ?? null;
+        return row?.status === "blocked" ? row : null;
+      }),
+    );
+    expect(issue?.executionRunId).toBeNull();
+
+    const recoveryAction = await db
+      .select()
+      .from(issueRecoveryActions)
+      .where(and(eq(issueRecoveryActions.companyId, companyId), eq(issueRecoveryActions.sourceIssueId, issueId)))
+      .then((rows) => rows[0] ?? null);
+    expect(recoveryAction).toMatchObject({
+      kind: "workspace_validation",
+      cause: "workspace_validation_failed",
+      status: "active",
+      ownerAgentId: agentId,
+      recoveryIssueId: null,
+    });
+    expect(recoveryAction?.evidence).toMatchObject({
+      sourceIssueId: issueId,
+      latestRunId: runId,
+      latestRunErrorCode: "workspace_validation_failed",
+      recoveryCause: "workspace_validation_failed",
+    });
+    expect(recoveryAction?.nextAction).toContain("Repair the source issue workspace link");
+
+    const comments = await db.select().from(issueComments).where(eq(issueComments.issueId, issueId));
+    expect(comments.some((comment) => comment.body.includes("workspace failed validation"))).toBe(true);
   });
 
   it("queues one finish-handoff wake when a successful run leaves in-progress work without a next action", async () => {

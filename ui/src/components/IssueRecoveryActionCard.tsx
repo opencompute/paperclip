@@ -46,6 +46,7 @@ export interface IssueRecoveryActionCardProps {
 const KIND_LABEL: Record<IssueRecoveryActionKind, string> = {
   missing_disposition: "Missing Disposition",
   stranded_assigned_issue: "Stranded Issue",
+  workspace_validation: "Workspace Validation",
   active_run_watchdog: "Active Watchdog",
   issue_graph_liveness: "Graph Liveness",
 };
@@ -54,6 +55,8 @@ const KIND_HEADLINE: Record<IssueRecoveryActionKind, string> = {
   missing_disposition: "This issue's run finished, but no next step was chosen.",
   stranded_assigned_issue:
     "Paperclip retried this issue's last run and it still has no live execution path.",
+  workspace_validation:
+    "Paperclip stopped this run because the issue's git workspace could not be validated.",
   active_run_watchdog:
     "The active run has been silent. Recovery is observing without interrupting it.",
   issue_graph_liveness:
@@ -169,6 +172,7 @@ function readWakePolicySummary(action: IssueRecoveryAction): string | null {
   if (type === "wake_owner") return "Corrective wake queued";
   if (type === "board_escalation") return "Escalated to board";
   if (type === "manual") return "Manual";
+  if (type === "manual_repair_required") return "Manual repair required";
   if (type === "monitor") {
     const interval = readEvidenceString(policy.intervalLabel);
     return interval ? `Monitor scheduled · ${interval}` : "Monitor scheduled";

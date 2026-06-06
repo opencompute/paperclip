@@ -3461,6 +3461,7 @@ export function issueService(db: Db) {
     if (projectId && workspace.projectId !== projectId) {
       throw unprocessable("Project workspace must belong to the selected project");
     }
+    return workspace;
   }
 
   async function assertValidExecutionWorkspace(
@@ -3483,6 +3484,7 @@ export function issueService(db: Db) {
     if (projectId && workspace.projectId !== projectId) {
       throw unprocessable("Execution workspace must belong to the selected project");
     }
+    return workspace;
   }
 
   async function assertValidLabelIds(companyId: string, labelIds: string[], dbOrTx: any = db) {
@@ -4741,7 +4743,6 @@ export function issueService(db: Db) {
       }
       return db.transaction(async (tx) => {
         const defaultCompanyGoal = await getDefaultCompanyGoal(tx, companyId);
-        const projectGoalId = await getProjectDefaultGoalId(tx, companyId, issueData.projectId);
         let projectWorkspaceId = issueData.projectWorkspaceId ?? null;
         let executionWorkspaceId = issueData.executionWorkspaceId ?? null;
         let executionWorkspacePreference = issueData.executionWorkspacePreference ?? null;
@@ -4754,6 +4755,9 @@ export function issueService(db: Db) {
           issueData.executionWorkspaceSettings !== undefined;
         if (workspaceInheritanceIssueId) {
           const workspaceSource = await getWorkspaceInheritanceIssue(tx, companyId, workspaceInheritanceIssueId);
+          if (issueData.projectId == null && workspaceSource.projectId) {
+            issueData.projectId = workspaceSource.projectId;
+          }
           if (projectWorkspaceId == null && workspaceSource.projectWorkspaceId) {
             projectWorkspaceId = workspaceSource.projectWorkspaceId;
           }
@@ -4780,6 +4784,15 @@ export function issueService(db: Db) {
             }
           }
         }
+        if (issueData.projectId == null && projectWorkspaceId) {
+          const workspace = await assertValidProjectWorkspace(companyId, null, projectWorkspaceId, tx);
+          issueData.projectId = workspace.projectId;
+        }
+        if (issueData.projectId == null && executionWorkspaceId) {
+          const workspace = await assertValidExecutionWorkspace(companyId, null, executionWorkspaceId, tx);
+          issueData.projectId = workspace.projectId;
+        }
+        const projectGoalId = await getProjectDefaultGoalId(tx, companyId, issueData.projectId);
         // Cache the project policy lookup for this insert. Both the
         // default-settings block and the assignee-environment-promotion block
         // need the same row; without caching they'd issue two round-trips.
@@ -5014,7 +5027,7 @@ export function issueService(db: Db) {
       if (issueData.assigneeUserId) {
         await assertAssignableUser(existing.companyId, issueData.assigneeUserId);
       }
-      const nextProjectId = issueData.projectId !== undefined ? issueData.projectId : existing.projectId;
+      let nextProjectId = issueData.projectId !== undefined ? issueData.projectId : existing.projectId;
       const nextProjectWorkspaceId =
         issueData.projectWorkspaceId !== undefined ? issueData.projectWorkspaceId : existing.projectWorkspaceId;
       const nextExecutionWorkspaceId =
@@ -5027,11 +5040,29 @@ export function issueService(db: Db) {
         issueData.executionWorkspaceSettings !== undefined
           ? parseIssueExecutionWorkspaceSettings(issueData.executionWorkspaceSettings)
           : parseIssueExecutionWorkspaceSettings(existing.executionWorkspaceSettings);
+      let validatedProjectWorkspace: { projectId: string } | null = null;
+      let validatedExecutionWorkspace: { projectId: string } | null = null;
+      if (!nextProjectId && nextProjectWorkspaceId) {
+        const workspace = await assertValidProjectWorkspace(existing.companyId, null, nextProjectWorkspaceId);
+        validatedProjectWorkspace = workspace;
+        nextProjectId = workspace.projectId;
+        patch.projectId = workspace.projectId;
+      }
+      if (!nextProjectId && nextExecutionWorkspaceId) {
+        const workspace = await assertValidExecutionWorkspace(existing.companyId, null, nextExecutionWorkspaceId);
+        validatedExecutionWorkspace = workspace;
+        nextProjectId = workspace.projectId;
+        patch.projectId = workspace.projectId;
+      }
       if (nextProjectWorkspaceId) {
-        await assertValidProjectWorkspace(existing.companyId, nextProjectId, nextProjectWorkspaceId);
+        if (!validatedProjectWorkspace) {
+          await assertValidProjectWorkspace(existing.companyId, nextProjectId, nextProjectWorkspaceId);
+        }
       }
       if (nextExecutionWorkspaceId) {
-        await assertValidExecutionWorkspace(existing.companyId, nextProjectId, nextExecutionWorkspaceId);
+        if (!validatedExecutionWorkspace) {
+          await assertValidExecutionWorkspace(existing.companyId, nextProjectId, nextExecutionWorkspaceId);
+        }
       }
 
       applyStatusSideEffects(issueData.status, patch);

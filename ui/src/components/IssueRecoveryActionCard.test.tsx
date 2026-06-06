@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
 import { createRoot } from "react-dom/client";
+import { flushSync } from "react-dom";
 import type { AnchorHTMLAttributes, ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Agent, IssueRecoveryAction } from "@paperclipai/shared";
@@ -15,6 +15,18 @@ vi.mock("@/lib/router", () => ({
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+function act<T>(callback: () => T): T {
+  let result: T | undefined;
+  flushSync(() => {
+    result = callback();
+  });
+  const maybePromise = result as unknown as PromiseLike<unknown>;
+  if (result && typeof maybePromise.then === "function") {
+    throw new TypeError("This test act shim only supports synchronous callbacks.");
+  }
+  return result as T;
+}
 
 let root: ReturnType<typeof createRoot> | null = null;
 let container: HTMLDivElement | null = null;
@@ -155,6 +167,33 @@ describe("IssueRecoveryActionCard", () => {
     const section = node.querySelector("section[aria-label]");
     expect(section?.getAttribute("aria-label")).toBe("Recovery action: observing active run");
     expect(node.textContent).toContain("OBSERVING ACTIVE RUN");
+  });
+
+  it("renders a workspace-specific label and headline for workspace_validation", () => {
+    const node = render(
+      <IssueRecoveryActionCard
+        action={buildAction({
+          kind: "workspace_validation",
+          cause: "workspace_validation_failed",
+          nextAction:
+            "Repair the source issue workspace link, project workspace cwd, or git checkout before resuming adapter execution.",
+          wakePolicy: { type: "manual_repair_required" },
+          evidence: {
+            recoveryCause: "workspace_validation_failed",
+            latestRunErrorCode: "workspace_validation_failed",
+          },
+        })}
+      />,
+    );
+    const section = node.querySelector("section[aria-label]");
+    expect(section?.getAttribute("data-recovery-kind")).toBe("workspace_validation");
+    expect(node.textContent).toContain("Workspace Validation");
+    expect(node.textContent).not.toContain("workspace_validation\n");
+    expect(node.textContent).toContain(
+      "Paperclip stopped this run because the issue's git workspace could not be validated.",
+    );
+    expect(node.textContent).toContain("Repair the source issue workspace link");
+    expect(node.textContent).toContain("Manual repair required");
   });
 
   it("renders the resolved label and outcome when resolved", () => {

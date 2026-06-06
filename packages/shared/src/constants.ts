@@ -271,6 +271,7 @@ export type IssueSurfaceVisibility = (typeof ISSUE_SURFACE_VISIBILITIES)[number]
 export const ISSUE_RECOVERY_ACTION_KINDS = [
   "missing_disposition",
   "stranded_assigned_issue",
+  "workspace_validation",
   "active_run_watchdog",
   "issue_graph_liveness",
 ] as const;
